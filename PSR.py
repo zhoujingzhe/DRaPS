@@ -1,60 +1,60 @@
 import numpy as np
-from Hyparameter import Observation_space, action_space, Open_Left, Open_Right, Listen, Tiger_Left, Tiger_Right, MaxCTest, b_h
+from Hyparameter import MaxCTest
 import pandas as pd
 def length(test):
     return test.count('a')
 
 #A |n|x|s| b |s| x 1
 def solve(A,b):
-    A = np.array(A) + np.identity(n=2) * np.finfo(float).eps * 1000
+    A = np.array(A) #+ np.identity(n=2) * np.finfo(float).eps * 1000
     b = np.reshape(a=b, newshape=(-1, 1))
     res = np.linalg.solve(A, b)
     res = np.reshape(a=res, newshape=(-1,))
     return res
 
 class PSR(object):
-    def __init__(self):
+    def __init__(self, T, O, b_h, Observations, Actions):
         self.U_t_Name = []
         self.U_t = []
         self.U_q = []
         self.U_Q = None
         self.U_Q_Name = []
         self.Predictive_State = None
-        self.T = []
-        T_a1 = [[0.5, 0.5], [0.5, 0.5]] # taking actions open-left and open right
-        T_a0 = [[1, 0], [0, 1]] # taking action listen
-        self.T.append(T_a1)
-        self.T.append(T_a0)
-        self.T.append(T_a1)
-        self.O = []
-        O_1 = [[0.85, 0], [0, 0.15]] # taking action listen, tiger left
-        O_2 = [[0.15, 0], [0, 0.85]] # taking action listen, tiger right
-        O_3 = [[0.5, 0], [0, 0.5]] # taking action open-left and open right, and seeing tiger left and right
-        self.O.append([O_3, O_3])
-        self.O.append([O_1, O_2])
-        self.O.append([O_3, O_3])
+        self.T = T
+        # T_a1 = [[0.5, 0.5], [0.5, 0.5]] # taking actions open-left and open right
+        # T_a0 = [[1, 0], [0, 1]] # taking action listen
+        # self.T.append(T_a1)
+        # self.T.append(T_a0)
+        # self.T.append(T_a1)
+        self.O = O
+        # O_1 = [[0.85, 0], [0, 0.15]] # taking action listen, tiger left
+        # O_2 = [[0.15, 0], [0, 0.85]] # taking action listen, tiger right
+        # O_3 = [[0.5, 0], [0, 0.5]] # taking action open-left and open right, and seeing tiger left and right
+        # self.O.append([O_3, O_3])
+        # self.O.append([O_1, O_2])
+        # self.O.append([O_3, O_3])
         self.m = []
         self.m_name = []
         self.M = []
         self.M_name = []
-        self.Observations = Observation_space
-        self.Actions = action_space
+        self.Observations = Observations
+        self.Actions = Actions
         self.MaxNumCoreTest = MaxCTest
         self.b_h = b_h
 
     # generate a test representation
     def generate_test(self, base_sequence, action, observation):
         act = ''
-        if action == Open_Left:
+        if action == 'open-left':
             act = 'a0'
-        elif action == Listen:
+        elif action == 'open-right':
             act = 'a1'
-        elif action == Open_Right:
+        elif action == 'listen':
             act = 'a2'
         obj = ''
-        if observation == Tiger_Left:
+        if observation == 'tiger-left':
             obj = 'o0'
-        elif observation == Tiger_Right:
+        elif observation == 'tiger-right':
             obj = 'o1'
         base_sequence = base_sequence + act + obj
         return base_sequence
@@ -170,13 +170,9 @@ class PSR(object):
     #     m_test = np.dot(m_test, m_ao)
     #     return m_test
     # updating h to h_ao
-    def update(self, action_idx, observation, count):
+    def update(self, action_idx, observation_id, count):
         act = 'a' + str(action_idx)
-        ob = 'o'
-        if observation == Tiger_Left:
-            ob = ob + '0'
-        elif observation == Tiger_Right:
-            ob = ob + '1'
+        ob = 'o' + str(observation_id)
         test_ao = act + ob
         if test_ao not in self.m_name:
             self.gain_m()
@@ -194,7 +190,7 @@ class PSR(object):
         numerator = np.matmul(a=self.Predictive_State.T, b=M_ao)
         new_Predictive_State = numerator/denominator
         self.Predictive_State = new_Predictive_State.T
-        self.print_all(File_name=str(count)+test_ao)
+#        self.print_all(File_name=str(count)+test_ao)
         return self.Predictive_State
 
     # return predictive state P(Q|h)
@@ -208,9 +204,34 @@ class PSR(object):
 
     # print all details
     def print_all(self, File_name):
+        P_Q = pd.DataFrame(data=self.Predictive_State)
         U_Q = pd.DataFrame(data=self.U_Q, columns=self.U_Q_Name)
         M_ao = pd.DataFrame.from_records(data=self.M, index=self.M_name)
         m_ao = pd.DataFrame.from_records(data=self.m, index=self.m_name)
+        P_Q.to_csv(path_or_buf=File_name+'.csv', mode='a')
         U_Q.to_csv(path_or_buf=File_name+'.csv', mode='a')
         M_ao.to_csv(path_or_buf=File_name+'.csv', mode='a')
         m_ao.to_csv(path_or_buf=File_name+'.csv', mode='a')
+
+from Environment import POMDPEnvironment
+if __name__ == "__main__":
+    #####initialization######
+    EnvObject = POMDPEnvironment(filename='tiger.95.POMDP')
+    T = EnvObject._obtain_transition()
+    O = EnvObject._obtain_observation()
+    b_h = EnvObject._obtain_b_h()
+    b_h = np.reshape(a=b_h, newshape=(1, -1))
+    discount_rate = EnvObject.discount
+    Observations = EnvObject.observations
+    States = EnvObject.states
+    Actions = EnvObject.actions
+    ###########################################
+    PSR = PSR(T=T, O=O, b_h=b_h, Observations=Observations, Actions=Actions)
+    testset = PSR.generate_tests()
+    U_T = PSR.Computing_U_T()
+    U_Q_Name, U_Q = PSR.generate_U_Q()
+    PSR.gain_m()
+    for i in range(len(Actions)):
+        for j in range(len(Observations)):
+            PSR.gain_M_ao(ao='a'+str(i)+'o'+str(j))
+    PSR.print_all('Detail')
