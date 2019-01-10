@@ -12,13 +12,14 @@ class agent(object):
         self.epsilon = 0.5
         self.initial_epsilon = 0.5
         self.final_epsilon = np.finfo(float).eps
-        self.explore = 1000
+        self.explore = 500
         self.memory_a0 = []
         self.memory_a1 = []
         self.memory_a2 = []
         self.max_memory = 2000 # number of previous transitions to remember
         self.observation_id = None
         self.sampling_size = sampling_size
+        self.count = 0
 
     # set the dimensionality of predictive state and action space and state space and discount rate for neural network
     def set_state_dim(self, state_dim, action_space, state_space, discount_rate):
@@ -81,7 +82,9 @@ class agent(object):
             sample_a2 = np.array(self.memory_a2)[index_a2]
             samples = np.concatenate([sample_a0, sample_a1, sample_a2], axis=0)
             self.Net._train(samples=samples)
-            self.Net.target_train()
+            self.count = self.count + 1
+            if self.count % 10 == 0:
+                self.Net.target_train()
             self.Net.origin_Net.save_weights(filepath='origin_net.h5', overwrite=True)
             self.Net.target_Net.save_weights(filepath='target_net.h5', overwrite=True)
 

@@ -1,14 +1,13 @@
 import numpy as np
 import tensorflow as tf
-from keras.layers import Input, Dense
+from keras.layers import Input, Dense, Softmax
 from keras.layers import Activation
-from keras.layers.advanced_activations import LeakyReLU
 from keras.optimizers import Adam
 from keras.models import Model
 from Hyparameter import Hidden_Layer1, Hidden_Layer2, Hidden_Layer3,\
-    LearningRate, State_Size, Action_Dim, TAU, Num_Z, z_max, z_min, DecayRate, ShrinkingCount
+    LearningRate, State_Size, Action_Dim, TAU, Num_Z, z_max, z_min, DecayRate
 import keras.backend as K
-from keras.losses import kullback_leibler_divergence, mean_squared_error
+from keras.losses import kullback_leibler_divergence, mean_absolute_error
 
 
 class CriticNet(object):
@@ -28,10 +27,10 @@ class CriticNet(object):
         self.delta_z = (np.float(z_max) - np.float(z_min))/Num_Z
         self.z = np.arange(z_min, z_max, self.delta_z, dtype=float)
         self.trainNet = self.TrainNet(inputs=(self.state_dim,))
+        self.trainNet.compile(optimizer=Adam(lr=0.01), loss=kullback_leibler_divergence)
         self.origin_Net = self.Create_Network(inputs=(self.state_dim,))
         self.target_Net = self.Create_Network(inputs=(self.state_dim,))
         self.DecayRate = DecayRate
-        self.optimizer = self.Update_Weight()
         self.origin_action_optimal = self.settingup_optimal_action(net=self.origin_Net)
         self.target_action_optimal = self.settingup_optimal_action(net=self.target_Net)
         self.projectfunction = self.Projection()
@@ -51,7 +50,7 @@ class CriticNet(object):
         X = Activation('linear')(X)
         output = Dense(self.num_atoms, input_dim=K.shape(X), kernel_initializer='random_uniform', bias_initializer='zeros',
                         name='action')(X)
-        output = LeakyReLU(alpha=0.3)(output)
+        output = Softmax(axis=-1)(output)
         model = Model(inputs=input, outputs=output)
         return model
 
@@ -80,16 +79,20 @@ class CriticNet(object):
         for i in range(len(self.action_space)):
             X_i = Dense(self.num_atoms, input_dim=K.shape(X), kernel_initializer='random_uniform', bias_initializer='zeros',
                         name='action'+str(i))(X)
-            X_i = LeakyReLU(alpha=0.3)(X_i)
+            X_i = Softmax(axis=-1)(X_i)
             output.append(X_i)
         model = Model(inputs=input, outputs=output)
         return model
 
     #return the probabilities over z_i with respect to a pair (w,a)
-    def _probability(self, theta_i):
-        pro = K.softmax(x=theta_i, axis=-1)
-        newpro = K.permute_dimensions(x=pro, pattern=(1,0,2))
-        return newpro
+    def reshape_distribution(self, theta_i):
+        pro = None
+        for i in range(len(theta_i)):
+            if pro is None:
+                pro = K.expand_dims(x=theta_i[i], axis=1)
+            else:
+                pro = K.concatenate([pro, K.expand_dims(x=theta_i[i], axis=1)], axis=1)
+        return pro
 
     #return the projected Probability distribution
     def Projection(self):
@@ -129,13 +132,13 @@ class CriticNet(object):
     def settingup_optimal_action(self, net):
         input = K.placeholder(shape=(None, self.state_dim), dtype='float32')
         theta_j = net(inputs=input)
-        All_Pro_list = self._probability(theta_i=theta_j)
+        All_Pro_list = self.reshape_distribution(theta_i=theta_j)
         expect_Pro_over_z = self.return_expectation_distribution(Dis=All_Pro_list)
         action_idx = K.argmax(x=expect_Pro_over_z, axis=-1)
         action_id = action_idx
-        action_idx = K.reshape(x=action_idx, shape=(-1, 1))
-        temp = K.reshape(x=K.arange(0, K.shape(action_idx)[0], 1, 'int64'), shape=(-1, 1))
-        index_action = K.concatenate([temp, action_idx])
+        idx = K.reshape(x=action_idx, shape=(-1, 1))
+        temp = K.reshape(x=K.arange(0, K.shape(idx)[0], 1, 'int64'), shape=(-1, 1))
+        index_action = K.concatenate([temp, idx])
         Optimal_pro_z = tf.gather_nd(params=All_Pro_list, indices=index_action)
         return K.function([input], [action_id, Optimal_pro_z, expect_Pro_over_z])
 
@@ -143,6 +146,7 @@ class CriticNet(object):
         index_action, Optimal_action_pro_z, all_Dis = self.selecting_optimal_action(Predictive_State=Next_Predictive_State, net='target')
         Projected_update_current_state_pro_z = self.projectfunction([reward_i, Optimal_action_pro_z])
         Projected_update_current_state_pro_z = np.array(Projected_update_current_state_pro_z[0])
+        print('The sum of probability of Projected distribution' + str(np.sum(a=Projected_update_current_state_pro_z, axis=-1)))
         print('the Optimal action on Next State'+str(index_action))
         print('the reward is:'+str(reward_i))
         print('the action:'+str(index_action_i))
@@ -182,22 +186,9 @@ class CriticNet(object):
 
     # return loss in this batch
     def Custom_loss(self, Predictive_State, index_action_i, upd_distribution):
-        input = K.reshape(x=Predictive_State, shape=(-1, self.state_dim))
+        input = np.reshape(a=Predictive_State, newshape=(-1, self.state_dim))
         self.CopyWeight(a_id=index_action_i[0])
-        a_id = index_action_i[0]
-        lr, loss = self.optimizer([input, upd_distribution])
-        print('the loss in this update:'+str(loss))
+        loss = self.trainNet.train_on_batch(x=input, y=upd_distribution)
+        print('the loss on this update is', loss)
         self.SetWeight(a_id=index_action_i[0])
-
-    def Update_Weight(self):
-        input = K.placeholder(shape=(None, self.state_dim), dtype='float32')
-        upd_distribution = K.placeholder(shape=(None, self.num_atoms), dtype='float64')
-        ori_distribution = self.trainNet(inputs=input)
-        ori_distribution = K.cast(x=ori_distribution, dtype='float64')
-#        loss = 10 * K.mean(x=kullback_leibler_divergence(y_true=upd_distribution, y_pred=ori_distribution))
-        L = K.sum(x=(upd_distribution - ori_distribution)*self.z, axis=-1)
-        loss = K.mean(L)
-        updates = self.OPTIMIZER.get_updates(loss=loss, params=self.trainNet.trainable_weights)
-        train = K.function([input, upd_distribution], [self.OPTIMIZER.lr, loss], updates=updates)
-        return train
 
