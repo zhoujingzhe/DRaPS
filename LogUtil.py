@@ -1,4 +1,3 @@
-import logging
 import logging.config
 
 logging.config.fileConfig('loggin.conf')
@@ -8,3 +7,4 @@ handler = logging.FileHandler('Console.log')
 handler.setLevel(logging.INFO)
 logger.addHandler(handler)
 logger.info('Starting to training')
+

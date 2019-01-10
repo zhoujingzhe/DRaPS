@@ -393,8 +393,19 @@ class POMDPEnvironment:
     def _obtain_rewards(self):
         return self.R
 
+    def _obtain_reward_matrix(self):
+        R_matrixs = {}
+        keys = self.R.keys()
+        values = self.R.values()
+        for value in values:
+            R_matrixs[value]= np.zeros(shape=(len(self.actions), len(self.states), len(self.states), len(self.observations)), dtype=np.int)
+        for key, value in self.R.items():
+            M = R_matrixs[value]
+            M[key[0], key[1], key[2], key[3]]=1
+        return R_matrixs
+
 if __name__ ==  "__main__":
     EnvObject = POMDPEnvironment(filename='tiger.95.POMDP')
     T = EnvObject._obtain_transition()
     O = EnvObject._obtain_observation()
-    a = 1
+    R_M = EnvObject._obtain_reward_matrix()

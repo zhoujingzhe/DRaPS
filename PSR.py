@@ -6,14 +6,14 @@ def length(test):
 
 #A |n|x|s| b |s| x 1
 def solve(A,b):
-    A = np.array(A) #+ np.identity(n=2) * np.finfo(float).eps * 1000
+    A = np.array(A)
     b = np.reshape(a=b, newshape=(-1, 1))
     res = np.linalg.solve(A, b)
     res = np.reshape(a=res, newshape=(-1,))
     return res
 
 class PSR(object):
-    def __init__(self, T, O, b_h, Observations, Actions):
+    def __init__(self, T, O, b_h, Observations, Actions, R_Matrix):
         self.U_t_Name = []
         self.U_t = []
         self.U_q = []
@@ -21,18 +21,8 @@ class PSR(object):
         self.U_Q_Name = []
         self.Predictive_State = None
         self.T = T
-        # T_a1 = [[0.5, 0.5], [0.5, 0.5]] # taking actions open-left and open right
-        # T_a0 = [[1, 0], [0, 1]] # taking action listen
-        # self.T.append(T_a1)
-        # self.T.append(T_a0)
-        # self.T.append(T_a1)
         self.O = O
-        # O_1 = [[0.85, 0], [0, 0.15]] # taking action listen, tiger left
-        # O_2 = [[0.15, 0], [0, 0.85]] # taking action listen, tiger right
-        # O_3 = [[0.5, 0], [0, 0.5]] # taking action open-left and open right, and seeing tiger left and right
-        # self.O.append([O_3, O_3])
-        # self.O.append([O_1, O_2])
-        # self.O.append([O_3, O_3])
+        self.R_Matrix = R_Matrix
         self.m = []
         self.m_name = []
         self.M = []
@@ -40,23 +30,13 @@ class PSR(object):
         self.Observations = Observations
         self.Actions = Actions
         self.MaxNumCoreTest = MaxCTest
+        self.R_list = list(self.R_Matrix.keys())
         self.b_h = b_h
 
     # generate a test representation
-    def generate_test(self, base_sequence, action, observation):
-        act = ''
-        if action == 'open-left':
-            act = 'a0'
-        elif action == 'open-right':
-            act = 'a1'
-        elif action == 'listen':
-            act = 'a2'
-        obj = ''
-        if observation == 'tiger-left':
-            obj = 'o0'
-        elif observation == 'tiger-right':
-            obj = 'o1'
-        base_sequence = base_sequence + act + obj
+    def generate_test(self, base_sequence, a_id, o_id, r_id):
+        aor = 'a'+str(a_id)+'o'+str(o_id) +'r'+str(r_id)
+        base_sequence = base_sequence + aor
         return base_sequence
 
     # producing a sequences of tests representations
@@ -64,7 +44,8 @@ class PSR(object):
         if len(self.U_t_Name) == 0:
             for i in range(len(self.Actions)):
                 for j in range(len(self.Observations)):
-                    self.U_t_Name.append(self.generate_test(base_sequence='', action=self.Actions[i], observation=self.Observations[j]))
+                    for k in range(len(self.R_list)):
+                        self.U_t_Name.append(self.generate_test(base_sequence='', a_id=i, o_id=j, r_id=k))
         count = len(self.U_t_Name)
         k=0
         while count < num:
@@ -72,25 +53,28 @@ class PSR(object):
             k=k+1
             for i in range(len(self.Actions)):
                 for j in range(len(self.Observations)):
-                    self.U_t_Name.append(self.generate_test(base_sequence=base_seq, action=self.Actions[i], observation=self.Observations[j]))
-                    count = len(self.U_t_Name)
-                    if count >= num:
-                        return self.U_t_Name
+                    for k in range(len(self.R_list)):
+                        self.U_t_Name.append(self.generate_test(base_sequence=base_seq, a_id=i, o_id=j, r_id=k))
+                        count = len(self.U_t_Name)
+                        if count >= num:
+                            return self.U_t_Name
         return self.U_t_Name
 
     # Computing the probabilities of tests
     def Computing_U_T(self):
         for i in range(len(self.U_t_Name)):
             U_t_Name = self.U_t_Name[i]
-            U_t = np.identity(2)
-            iters = np.arange(0, len(U_t_Name), 4)
+            U_t = np.identity(len(self.Observations))
+            iters = np.arange(0, len(U_t_Name), 6)
             for j in iters:
                 if U_t_Name[j] == 'a':
                     num_a = np.int(x=U_t_Name[j+1])
                     num_o = np.int(x=U_t_Name[j+3])
+                    num_r = np.int(x=U_t_Name[j+5])
                     T = self.T[num_a]
                     O = self.O[num_a][num_o]
-                    U_t = np.matmul(a=U_t, b=np.matmul(O, T))
+                    R = self.R_Matrix[self.R_list[num_r]][num_a, :, :, num_o]
+                    U_t = np.matmul(a=U_t, b=np.multiply(np.matmul(T, O), R))
                 else:
                     print('exception on Computing tests')
             e = np.ones(shape=(np.shape(a=U_t)[1], 1))
@@ -127,15 +111,17 @@ class PSR(object):
 
     # calculating U_t for a specific test t
     def gain_U_t(self, test_name):
-        iters = np.arange(0, len(test_name), 4)
-        test_pro = np.identity(2)
+        iters = np.arange(0, len(test_name), 6)
+        test_pro = np.identity(len(self.Observations))
         for j in iters:
             if test_name[j] == 'a':
                 num_a = np.int(x=test_name[j + 1])
                 num_o = np.int(x=test_name[j + 3])
+                num_r = np.int(x=test_name[j + 5])
                 T = self.T[num_a]
                 O = self.O[num_a][num_o]
-                test_pro = np.matmul(a=test_pro, b=np.matmul(O, T))
+                R = self.R_Matrix[self.R_list[num_r]][num_a, :, :, num_o]
+                test_pro = np.matmul(a=test_pro, b=np.multiply(np.matmul(T, O), R))
             else:
                 print('exception on Computing tests')
         e = np.ones(shape=(np.shape(a=test_pro)[1], 1))
@@ -154,26 +140,8 @@ class PSR(object):
         self.M_name.append(ao)
         return [M_ao, M_ao_name]
 
-    ### trouble on M_ao^T * M_ao^T * m_ao^T
-    # def gain_m_t(self, test):
-    #     iters = np.arange(0, len(test)-4, 4)
-    #     m_test = 1
-    #     for i in iters:
-    #         ao = test[i:i+4]
-    #         if ao not in self.M_name:
-    #             m_test = np.dot(m_test, np.array(self.gain_M_ao(ao=ao).T))
-    #         elif ao in self.M_name:
-    #             m_test = np.dot(m_test, np.array(self.M[self.M_name.index(ao)]).T)
-    #     ao = test[-4:]
-    #     m_ao = self.m[self.m_name.index(ao)]
-    #     m_ao = np.reshape(m_ao, newshape=(-1, 1))
-    #     m_test = np.dot(m_test, m_ao)
-    #     return m_test
-    # updating h to h_ao
-    def update(self, action_idx, observation_id, count):
-        act = 'a' + str(action_idx)
-        ob = 'o' + str(observation_id)
-        test_ao = act + ob
+    def update(self, action_idx, observation_id, r_id, count):
+        test_ao = 'a' + str(action_idx) + 'o' + str(observation_id) + 'r' + str(r_id)
         if test_ao not in self.m_name:
             self.gain_m()
         index = self.m_name.index(test_ao)
@@ -219,6 +187,7 @@ if __name__ == "__main__":
     EnvObject = POMDPEnvironment(filename='tiger.95.POMDP')
     T = EnvObject._obtain_transition()
     O = EnvObject._obtain_observation()
+    R_Matrix = EnvObject._obtain_reward_matrix()
     b_h = EnvObject._obtain_b_h()
     b_h = np.reshape(a=b_h, newshape=(1, -1))
     discount_rate = EnvObject.discount
@@ -226,12 +195,13 @@ if __name__ == "__main__":
     States = EnvObject.states
     Actions = EnvObject.actions
     ###########################################
-    PSR = PSR(T=T, O=O, b_h=b_h, Observations=Observations, Actions=Actions)
+    PSR = PSR(T=T, O=O, b_h=b_h, Observations=Observations, Actions=Actions, R_Matrix=R_Matrix)
     testset = PSR.generate_tests()
     U_T = PSR.Computing_U_T()
     U_Q_Name, U_Q = PSR.generate_U_Q()
     PSR.gain_m()
     for i in range(len(Actions)):
         for j in range(len(Observations)):
-            PSR.gain_M_ao(ao='a'+str(i)+'o'+str(j))
+            for k in range(len(PSR.R_list)):
+                PSR.gain_M_ao(ao='a'+str(i)+'o'+str(j)+'r'+str(k))
     PSR.print_all('Detail')

@@ -1,39 +1,38 @@
 from Network import CriticNet
-from Hyparameter import batch_size, sampling_size, predictive_state_space
+from Hyparameter import sampling_size
 from PSR import PSR
 from Environment import POMDPEnvironment
 import numpy as np
 from LogUtil import logger
-import keras.backend as K
+
 # agent module for learning
 class agent(object):
     def __init__(self, action_space):
         self.action_space = action_space
-        self.current_state_index = 0
         self.epsilon = 0.5
         self.initial_epsilon = 0.5
         self.final_epsilon = np.finfo(float).eps
-        self.explore = 5000
-        self.memory = []
+        self.explore = 1000
+        self.memory_a0 = []
+        self.memory_a1 = []
+        self.memory_a2 = []
         self.max_memory = 2000 # number of previous transitions to remember
         self.observation_id = None
-        self.batch_size = batch_size
         self.sampling_size = sampling_size
-
-    # set an predictive state index as current state
-    def set_state(self, pred_state_index):
-        self.current_state_index = pred_state_index
 
     # set the dimensionality of predictive state and action space and state space and discount rate for neural network
     def set_state_dim(self, state_dim, action_space, state_space, discount_rate):
         self.Net = CriticNet(state_dim=state_dim, action_space=action_space, state_space=state_space, discount_rate=discount_rate)
 
     # return the action_index it will act
-    def taking_action(self):
+    def taking_action(self, Predictive_State):
         if np.random.rand() < self.epsilon:
             action_index = np.random.randint(low=0, high=len(self.action_space), size=1, dtype=np.int)
         else:
-            action_index, Optimal_pro_z = self.Net.selecting_optimal_action(index_state=[self.current_state_index], net='origin')
+            action_index, Optimal_pro_z, all_Dis = self.Net.selecting_optimal_action(Predictive_State=Predictive_State, net='origin')
+            print('under current predictive state:', Predictive_State)
+            for i in range(len(all_Dis[0])):
+                print('for action id:' + str(i), 'expectation:'+str(all_Dis[0][i]))
         if action_index.shape == (1,):
             action_index = action_index[0]
         else:
@@ -41,19 +40,47 @@ class agent(object):
         return action_index
 
     # storing the action and relative information in memory for learning
-    def replay_memory(self, s_index, action_idx, r_t, s1_index):
-        self.memory.append((s_index, action_idx, r_t, s1_index))
+    def replay_memory(self, Last_Predictive_State, action_idx, r_t, Next_Predictive_State):
+        if action_idx == 0:
+            self.memory_a0.append((Last_Predictive_State, action_idx, r_t, Next_Predictive_State))
+        elif action_idx == 1:
+            self.memory_a1.append((Last_Predictive_State, action_idx, r_t, Next_Predictive_State))
+        elif action_idx == 2:
+            self.memory_a2.append((Last_Predictive_State, action_idx, r_t, Next_Predictive_State))
+
         if self.epsilon > self.final_epsilon:
             self.epsilon -= (self.initial_epsilon - self.final_epsilon) / self.explore
 
-        if len(self.memory) > self.max_memory:
-            self.memory.pop(-1)
+        if len(self.memory_a0) > self.max_memory:
+            self.memory_a0.pop(-1)
+        if len(self.memory_a1) > self.max_memory:
+            self.memory_a1.pop(-1)
+        if len(self.memory_a2) > self.max_memory:
+            self.memory_a2.pop(-1)
 
-        sampling_length = len(self.memory)
-        if sampling_length % 30 == 0:
-            sampling_index = np.random.randint(low=0, high=sampling_length-1, size=self.sampling_size, dtype=np.int)
-            samples = np.array(self.memory)[sampling_index]
-            self.Net._train(samples=samples, batch_size=batch_size)
+        sampling_length = len(self.memory_a0) + len(self.memory_a1) + len(self.memory_a2)
+        if sampling_length % self.sampling_size == 0 or sampling_length > 100:
+            size = int(self.sampling_size / len(self.action_space))
+            if len(self.memory_a0) < size:
+                index_a0 = np.random.randint(0, len(self.memory_a0), size=len(self.memory_a0), dtype=np.int)
+            else:
+                index_a0 = np.random.randint(0, len(self.memory_a0), size=size,
+                                              dtype=np.int)
+            if len(self.memory_a1) < size:
+                index_a1 = np.random.randint(0, len(self.memory_a1), size=len(self.memory_a1), dtype=np.int)
+            else:
+                index_a1 = np.random.randint(0, len(self.memory_a1), size=size,
+                                              dtype=np.int)
+            if len(self.memory_a2) < size:
+                index_a2 = np.random.randint(0, len(self.memory_a2), size=len(self.memory_a2), dtype=np.int)
+            else:
+                index_a2 = np.random.randint(0, len(self.memory_a2), size=size,
+                                              dtype=np.int)
+            sample_a0 = np.array(self.memory_a0)[index_a0]
+            sample_a1 = np.array(self.memory_a1)[index_a1]
+            sample_a2 = np.array(self.memory_a2)[index_a2]
+            samples = np.concatenate([sample_a0, sample_a1, sample_a2], axis=0)
+            self.Net._train(samples=samples)
             self.Net.target_train()
             self.Net.origin_Net.save_weights(filepath='origin_net.h5', overwrite=True)
             self.Net.target_Net.save_weights(filepath='target_net.h5', overwrite=True)
@@ -61,18 +88,19 @@ class agent(object):
 
 # Environment Module for responding actions from agent
 class Environment(object):
-    def __init__(self, R, Observation):
+    def __init__(self, R, Observation, O):
         self.tiger_state_index = np.random.randint(low=0, high=2, size=1, dtype=np.int)[0]
         self.R = R
         self.OBSERVATION = Observation
+        self.O = O
+
     # tiger will randomly move after an agent acts open-left or open-right
     def tiger_shift(self):
-        move_left = np.random.rand()
-        move_right = 1 - move_left
-        if move_left > move_right:
+        action = np.random.choice(a=['move_left', 'move_right'], size=1, p=[0.5, 0.5])
+        if action == 'move_left':
             self.tiger_state_index -= 1
             self.tiger_state_index = max(self.tiger_state_index, 0)
-        elif move_left < move_right:
+        elif action == 'move_right':
             self.tiger_state_index += 1
             self.tiger_state_index = min(self.tiger_state_index, 1)
         return self.tiger_state_index
@@ -85,21 +113,22 @@ class Environment(object):
     # receiving the action taken by an agent and transit back the observation and reward
     def receive_action(self, action_idx):
         current_state = self.tiger_state_index
-        next_state = self.tiger_shift()
-        observation = None
-        if action_idx != 2:
-            if current_state == action_idx:
-                observation = current_state
-            else:
-                observation = action_idx
+        next_state = None
+        if action_idx == 2:
+            next_state = current_state
+            print('the tiger actually is in s'+str(current_state))
+        elif action_idx == 0 or action_idx == 1:
+            next_state = self.tiger_shift()
         else:
-            pro = np.random.rand()
-            if pro < 0.15:
-                observation = (current_state+1) % 2
-            else:
-                observation = current_state
-        reward = self.obtain_reward(action_idx,current_state,next_state,observation)
-        return [reward, observation]
+            print('exception on receive action!')
+        o_list = []
+        for i in range(len(self.OBSERVATION)):
+            o_list.append(self.O[(action_idx, next_state, i)])
+        o_id_list = np.arange(0, len(self.OBSERVATION), 1, dtype=np.int)
+        o_id = np.random.choice(a=o_id_list, size=1, p=o_list)
+        print('the observation probability:', o_list)
+        reward = self.obtain_reward(action_idx, current_state, next_state, o_id[0])
+        return [reward, o_id[0]]
 
 if __name__ == "__main__":
     #####initialization########################################################
@@ -107,6 +136,8 @@ if __name__ == "__main__":
     EnvObject = POMDPEnvironment(filename='tiger.95.POMDP')
     T = EnvObject._obtain_transition()
     O = EnvObject._obtain_observation()
+    Z = EnvObject.Z
+    R_Matrix = EnvObject._obtain_reward_matrix()
     b_h = EnvObject._obtain_b_h()
     b_h = np.reshape(a=b_h, newshape=(1, -1))
     discount_rate = EnvObject.discount
@@ -118,14 +149,10 @@ if __name__ == "__main__":
     EPISODE_REWARD = 0
     maximum_episode = 600
     episode_length = 30
-    #############################################################################
-
-
-    ###############
     # initializing Agent Env and PSR three modules
     Agent = agent(action_space=Actions)
-    Env = Environment(R=EnvObject.R, Observation=Observations)
-    PSR = PSR(T=T, O=O, b_h=b_h, Observations=Observations, Actions=Actions)
+    Env = Environment(R=EnvObject._obtain_rewards(), Observation=Observations, O=Z)
+    PSR = PSR(T=T, O=O, b_h=b_h, Observations=Observations, Actions=Actions, R_Matrix = R_Matrix)
     testset = PSR.generate_tests()
     U_T = PSR.Computing_U_T()
     U_Q_Name, U_Q = PSR.generate_U_Q()
@@ -135,20 +162,27 @@ if __name__ == "__main__":
 #    Agent.Net.target_Net.load_weights(filepath='target_net.h5')
 
     #set an initial predictive state and starts learning process
-    global predictive_state_space
-    predictive_state_space.append(PSR.return_predictive_state())
-    Agent.set_state(pred_state_index=0)
+    Current_Predictive_State = PSR.Predictive_State
+    print('predictive state:', Current_Predictive_State)
     for j in range(maximum_episode):
         for i in range(episode_length):
-            action_idx = Agent.taking_action()
-            reward, Agent.observation_id = Env.receive_action(action_idx =action_idx)
+            action_idx = Agent.taking_action(Predictive_State=Current_Predictive_State)
+            reward, Agent.observation_id = Env.receive_action(action_idx=action_idx)
             EPISODE_REWARD += reward
-            predictive_state = PSR.update(action_idx=action_idx, observation_id=Agent.observation_id, count=i)
-            predictive_state_space.append(predictive_state)
-            index = len(predictive_state_space) - 1
-            Agent.replay_memory(s_index=index-1, action_idx=action_idx, r_t=reward, s1_index=index)
-            Agent.set_state(pred_state_index=index)
-            logger.info('Episode'+str(j)+'iteration'+str(i))
+            r_id = PSR.R_list.index(reward)
+            Next_Predictive_State = PSR.update(action_idx=action_idx, observation_id=Agent.observation_id, r_id=r_id, count=i)
+            print('action id:', action_idx)
+            print('observation id:', Agent.observation_id)
+            print('reward id:', r_id)
+            print('the new predictive state:', Next_Predictive_State)
+            Agent.replay_memory(Last_Predictive_State=Current_Predictive_State, action_idx=action_idx, r_t=reward, Next_Predictive_State=Next_Predictive_State)
+            Current_Predictive_State = Next_Predictive_State
         logger.info('this' + str(j) +'episode rewards is:'+str(EPISODE_REWARD))
         TOTAL_REWARD += EPISODE_REWARD
+        EPISODE_REWARD = 0
+        PSR.b_h = b_h
+        Current_Predictive_State = PSR.return_predictive_state()
+        PSR.Predictive_State = Current_Predictive_State
     logger.info('after 600 episode, the total reward is:'+str(TOTAL_REWARD))
+#    from Visualizing import Visualizing_Distribution_On_ActionStatePair
+#    Visualizing_Distribution_On_ActionStatePair(Agent=Agent, PSR=PSR, Env=Env)
