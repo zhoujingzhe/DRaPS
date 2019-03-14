@@ -1,0 +1,12 @@
+Num_Z = 51
+Hidden_Layer1 = 10
+Hidden_Layer2 = 50
+Hidden_Layer3 = 10
+LearningRate = 0.001
+DecayRate = 0.1
+TAU = 0.01
+z_max = 600.0
+z_min = -2000.0
+sampling_size = 30
+ShrinkingCount = 1500  # each 150 iteration during optimizer update, the lr should reduce by decayrate
+alpha = 0.8

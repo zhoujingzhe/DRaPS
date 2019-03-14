@@ -76,6 +76,12 @@ class POMDPEnvironment:
         # TODO support states as number
         line = self.contents[i]
         self.states = line.split()[1:]
+        if len(self.states) == 1:
+            if self.states[0].isdigit():
+                self.states = np.arange(0, int(self.states[0]), 1, np.int)
+                self.states = list(self.states.astype(np.str))
+            else:
+                print('error on observation')
         return i + 1
 
     def __get_actions(self, i):
@@ -86,6 +92,12 @@ class POMDPEnvironment:
     def __get_observations(self, i):
         line = self.contents[i]
         self.observations = line.split()[1:]
+        if len(self.observations) == 1:
+            if self.observations[0].isdigit():
+                self.observations = np.arange(0, int(self.observations[0]), 1, np.int)
+                self.observations = list(self.observations.astype(np.str))
+            else:
+                print('error on observation')
         return i + 1
 
     def __get_transition(self, i):
@@ -236,8 +248,10 @@ class POMDPEnvironment:
         """
         line = self.contents[i]
         pieces = [x for x in line.split() if (x.find(':') == -1)]
-        action = self.actions.index(pieces[0])
-
+        try:
+            action = self.actions.index(pieces[0])
+        except ValueError:
+            action = '*'
         if len(pieces) == 5 or len(pieces) == 4:
             # case 1:
             # R: <action> : <start-state> : <next-state> : <obs> %f
@@ -248,8 +262,11 @@ class POMDPEnvironment:
             obs_raw = pieces[3]
             prob = float(pieces[4]) if len(pieces) == 5 \
                 else float(self.contents[i+1])
-            self.__reward_ss(
-                action, start_state_raw, next_state_raw, obs_raw, prob)
+            if action != '*':
+                self.__reward_ss(action, start_state_raw, next_state_raw, obs_raw, prob)
+            else:
+                for j in range(len(self.actions)):
+                    self.__reward_ss(j, start_state_raw, next_state_raw, obs_raw, prob)
             return i + 1 if len(pieces) == 5 else i + 2
         elif len(pieces == 3):
             # case 2: R: <action> : <start-state> : <next-state>
@@ -409,3 +426,4 @@ if __name__ ==  "__main__":
     T = EnvObject._obtain_transition()
     O = EnvObject._obtain_observation()
     R_M = EnvObject._obtain_reward_matrix()
+    a = 1
